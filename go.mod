@@ -6,7 +6,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.2.1
 	github.com/lib/pq v1.10.9
 	github.com/marcboeker/go-duckdb v1.8.3
-	golang.org/x/crypto v0.46.0
+	golang.org/x/crypto v0.32.0
 )
 
 require (
