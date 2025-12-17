@@ -822,3 +822,209 @@ func (h *Handler) HandleSyncDomains(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, map[string]interface{}{"domains": domains}, http.StatusOK)
 }
+
+// Funnel handlers
+
+type FunnelStepDef struct {
+	Type  string `json:"type"`
+	Value string `json:"value"`
+	Text  string `json:"text,omitempty"`
+	Tag   string `json:"tag,omitempty"`
+}
+
+type FunnelRequest struct {
+	Name   string          `json:"name"`
+	Window int             `json:"window"`
+	Steps  []FunnelStepDef `json:"steps"`
+}
+
+type FunnelResponse struct {
+	ID        string          `json:"id"`
+	ProjectID string          `json:"project_id"`
+	Name      string          `json:"name"`
+	Window    int             `json:"window"`
+	Steps     []FunnelStepDef `json:"steps"`
+	CreatedAt string          `json:"created_at"`
+	UpdatedAt string          `json:"updated_at"`
+}
+
+func funnelToResponse(f *Funnel) FunnelResponse {
+	var steps []FunnelStepDef
+	json.Unmarshal([]byte(f.Steps), &steps)
+	return FunnelResponse{
+		ID:        f.ID,
+		ProjectID: f.ProjectID,
+		Name:      f.Name,
+		Window:    f.Window,
+		Steps:     steps,
+		CreatedAt: f.CreatedAt,
+		UpdatedAt: f.UpdatedAt,
+	}
+}
+
+// HandleGetFunnels returns all funnels for a project
+func (h *Handler) HandleGetFunnels(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	user, err := h.getUserFromRequest(r)
+	if err != nil {
+		writeJSON(w, map[string]string{"error": "Unauthorized"}, http.StatusUnauthorized)
+		return
+	}
+
+	domain := r.URL.Query().Get("domain")
+	if domain == "" {
+		writeJSON(w, map[string]string{"error": "Domain required"}, http.StatusBadRequest)
+		return
+	}
+
+	// Verify user owns this domain
+	project, err := h.db.GetProjectByDomainAndUserID(domain, user.ID)
+	if err != nil {
+		writeJSON(w, map[string]string{"error": "Project not found"}, http.StatusNotFound)
+		return
+	}
+
+	funnels, err := h.db.GetFunnelsByProjectID(project.ID)
+	if err != nil {
+		writeJSON(w, map[string]string{"error": "Failed to get funnels"}, http.StatusInternalServerError)
+		return
+	}
+
+	result := make([]FunnelResponse, len(funnels))
+	for i, f := range funnels {
+		result[i] = funnelToResponse(&f)
+	}
+
+	writeJSON(w, result, http.StatusOK)
+}
+
+// HandleCreateFunnel creates a new funnel
+func (h *Handler) HandleCreateFunnel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	user, err := h.getUserFromRequest(r)
+	if err != nil {
+		writeJSON(w, map[string]string{"error": "Unauthorized"}, http.StatusUnauthorized)
+		return
+	}
+
+	domain := r.URL.Query().Get("domain")
+	if domain == "" {
+		writeJSON(w, map[string]string{"error": "Domain required"}, http.StatusBadRequest)
+		return
+	}
+
+	// Verify user owns this domain
+	project, err := h.db.GetProjectByDomainAndUserID(domain, user.ID)
+	if err != nil {
+		writeJSON(w, map[string]string{"error": "Project not found"}, http.StatusNotFound)
+		return
+	}
+
+	var req FunnelRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, map[string]string{"error": "Invalid request"}, http.StatusBadRequest)
+		return
+	}
+
+	if req.Name == "" || len(req.Steps) < 2 {
+		writeJSON(w, map[string]string{"error": "Name and at least 2 steps required"}, http.StatusBadRequest)
+		return
+	}
+
+	stepsJSON, _ := json.Marshal(req.Steps)
+
+	funnel, err := h.db.CreateFunnel(project.ID, req.Name, req.Window, string(stepsJSON))
+	if err != nil {
+		writeJSON(w, map[string]string{"error": "Failed to create funnel"}, http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, funnelToResponse(funnel), http.StatusCreated)
+}
+
+// HandleUpdateFunnel updates a funnel
+func (h *Handler) HandleUpdateFunnel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	user, err := h.getUserFromRequest(r)
+	if err != nil {
+		writeJSON(w, map[string]string{"error": "Unauthorized"}, http.StatusUnauthorized)
+		return
+	}
+
+	domain := r.URL.Query().Get("domain")
+	funnelID := r.URL.Query().Get("id")
+	if domain == "" || funnelID == "" {
+		writeJSON(w, map[string]string{"error": "Domain and funnel ID required"}, http.StatusBadRequest)
+		return
+	}
+
+	// Verify user owns this domain
+	project, err := h.db.GetProjectByDomainAndUserID(domain, user.ID)
+	if err != nil {
+		writeJSON(w, map[string]string{"error": "Project not found"}, http.StatusNotFound)
+		return
+	}
+
+	var req FunnelRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, map[string]string{"error": "Invalid request"}, http.StatusBadRequest)
+		return
+	}
+
+	stepsJSON, _ := json.Marshal(req.Steps)
+
+	funnel, err := h.db.UpdateFunnel(funnelID, project.ID, req.Name, req.Window, string(stepsJSON))
+	if err != nil {
+		writeJSON(w, map[string]string{"error": "Failed to update funnel"}, http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, funnelToResponse(funnel), http.StatusOK)
+}
+
+// HandleDeleteFunnel deletes a funnel
+func (h *Handler) HandleDeleteFunnel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	user, err := h.getUserFromRequest(r)
+	if err != nil {
+		writeJSON(w, map[string]string{"error": "Unauthorized"}, http.StatusUnauthorized)
+		return
+	}
+
+	domain := r.URL.Query().Get("domain")
+	funnelID := r.URL.Query().Get("id")
+	if domain == "" || funnelID == "" {
+		writeJSON(w, map[string]string{"error": "Domain and funnel ID required"}, http.StatusBadRequest)
+		return
+	}
+
+	// Verify user owns this domain
+	project, err := h.db.GetProjectByDomainAndUserID(domain, user.ID)
+	if err != nil {
+		writeJSON(w, map[string]string{"error": "Project not found"}, http.StatusNotFound)
+		return
+	}
+
+	if err := h.db.DeleteFunnel(funnelID, project.ID); err != nil {
+		writeJSON(w, map[string]string{"error": "Failed to delete funnel"}, http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, map[string]string{"status": "deleted"}, http.StatusOK)
+}

@@ -287,3 +287,91 @@ func (db *DB) GetAllUsersAdmin() ([]User, error) {
 	}
 	return users, nil
 }
+
+// Funnel represents a saved funnel configuration
+type Funnel struct {
+	ID        string `json:"id"`
+	ProjectID string `json:"project_id"`
+	Name      string `json:"name"`
+	Window    int    `json:"window"`
+	Steps     string `json:"steps"` // JSON string
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+// CreateFunnel creates a new funnel
+func (db *DB) CreateFunnel(projectID, name string, window int, steps string) (*Funnel, error) {
+	var funnel Funnel
+	err := db.conn.QueryRow(`
+		INSERT INTO clickresearch_funnels (project_id, name, funnel_window, steps)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id, project_id, name, funnel_window, steps, created_at, updated_at
+	`, projectID, name, window, steps).Scan(
+		&funnel.ID, &funnel.ProjectID, &funnel.Name, &funnel.Window, &funnel.Steps, &funnel.CreatedAt, &funnel.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &funnel, nil
+}
+
+// GetFunnelsByProjectID returns all funnels for a project
+func (db *DB) GetFunnelsByProjectID(projectID string) ([]Funnel, error) {
+	rows, err := db.conn.Query(`
+		SELECT id, project_id, name, funnel_window, steps, created_at, updated_at
+		FROM clickresearch_funnels WHERE project_id = $1
+		ORDER BY created_at DESC
+	`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var funnels []Funnel
+	for rows.Next() {
+		var f Funnel
+		if err := rows.Scan(&f.ID, &f.ProjectID, &f.Name, &f.Window, &f.Steps, &f.CreatedAt, &f.UpdatedAt); err != nil {
+			return nil, err
+		}
+		funnels = append(funnels, f)
+	}
+	return funnels, nil
+}
+
+// UpdateFunnel updates a funnel
+func (db *DB) UpdateFunnel(id, projectID, name string, window int, steps string) (*Funnel, error) {
+	var funnel Funnel
+	err := db.conn.QueryRow(`
+		UPDATE clickresearch_funnels
+		SET name = $3, funnel_window = $4, steps = $5, updated_at = NOW()
+		WHERE id = $1 AND project_id = $2
+		RETURNING id, project_id, name, funnel_window, steps, created_at, updated_at
+	`, id, projectID, name, window, steps).Scan(
+		&funnel.ID, &funnel.ProjectID, &funnel.Name, &funnel.Window, &funnel.Steps, &funnel.CreatedAt, &funnel.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &funnel, nil
+}
+
+// DeleteFunnel deletes a funnel
+func (db *DB) DeleteFunnel(id, projectID string) error {
+	_, err := db.conn.Exec(`DELETE FROM clickresearch_funnels WHERE id = $1 AND project_id = $2`, id, projectID)
+	return err
+}
+
+// GetProjectByDomainAndUserID finds a project by domain for a user
+func (db *DB) GetProjectByDomainAndUserID(domain, userID string) (*Project, error) {
+	var project Project
+	err := db.conn.QueryRow(`
+		SELECT id, user_id, domain, api_key, name, created_at
+		FROM clickresearch_projects WHERE domain = $1 AND user_id = $2
+	`, domain, userID).Scan(
+		&project.ID, &project.UserID, &project.Domain, &project.APIKey, &project.Name, &project.CreatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &project, nil
+}

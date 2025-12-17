@@ -85,6 +85,12 @@ func main() {
 		mux.HandleFunc("/api/admin/projects", authHandler.HandleAdminProjects)
 		mux.HandleFunc("/api/admin/users", authHandler.HandleAdminUsers)
 		mux.HandleFunc("/api/sync/domains", authHandler.HandleSyncDomains)
+
+		// Funnel management endpoints
+		mux.HandleFunc("/api/funnels", authHandler.HandleGetFunnels)
+		mux.HandleFunc("/api/funnels/create", authHandler.HandleCreateFunnel)
+		mux.HandleFunc("/api/funnels/update", authHandler.HandleUpdateFunnel)
+		mux.HandleFunc("/api/funnels/delete", authHandler.HandleDeleteFunnel)
 	}
 
 	// Middleware: CORS + logging
@@ -97,7 +103,7 @@ func main() {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
 		}
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
 		if r.Method == "OPTIONS" {
