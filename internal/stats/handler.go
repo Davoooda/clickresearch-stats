@@ -153,11 +153,19 @@ func (h *Handler) HandleSources(w http.ResponseWriter, r *http.Request) {
 	domain, from, to := parseParams(r)
 	limit := parseLimit(r, 10)
 
+	cacheKey := fmt.Sprintf("sources:%s:%s:%d", domain, r.URL.Query().Get("period"), limit)
+	var data []TopItem
+	if h.cache.Get(cacheKey, &data) {
+		writeJSON(w, data)
+		return
+	}
+
 	data, err := h.store.GetTopSources(r.Context(), domain, from, to, limit)
 	if err != nil {
 		writeError(w, err, http.StatusInternalServerError)
 		return
 	}
+	h.cache.Set(cacheKey, data)
 	writeJSON(w, data)
 }
 
@@ -169,6 +177,13 @@ func (h *Handler) HandleDevices(w http.ResponseWriter, r *http.Request) {
 
 	domain, from, to := parseParams(r)
 	limit := parseLimit(r, 10)
+
+	cacheKey := fmt.Sprintf("devices:%s:%s:%d", domain, r.URL.Query().Get("period"), limit)
+	var cached map[string]any
+	if h.cache.Get(cacheKey, &cached) {
+		writeJSON(w, cached)
+		return
+	}
 
 	browsers, err := h.store.GetTopBrowsers(r.Context(), domain, from, to, limit)
 	if err != nil {
@@ -182,10 +197,12 @@ func (h *Handler) HandleDevices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, map[string]any{
+	result := map[string]any{
 		"browsers": browsers,
 		"devices":  devices,
-	})
+	}
+	h.cache.Set(cacheKey, result)
+	writeJSON(w, result)
 }
 
 func (h *Handler) HandleGeo(w http.ResponseWriter, r *http.Request) {
@@ -197,11 +214,19 @@ func (h *Handler) HandleGeo(w http.ResponseWriter, r *http.Request) {
 	domain, from, to := parseParams(r)
 	limit := parseLimit(r, 10)
 
+	cacheKey := fmt.Sprintf("geo:%s:%s:%d", domain, r.URL.Query().Get("period"), limit)
+	var data []TopItem
+	if h.cache.Get(cacheKey, &data) {
+		writeJSON(w, data)
+		return
+	}
+
 	data, err := h.store.GetTopCountries(r.Context(), domain, from, to, limit)
 	if err != nil {
 		writeError(w, err, http.StatusInternalServerError)
 		return
 	}
+	h.cache.Set(cacheKey, data)
 	writeJSON(w, data)
 }
 
@@ -223,11 +248,19 @@ func (h *Handler) HandleEvents(w http.ResponseWriter, r *http.Request) {
 	domain, from, to := parseParams(r)
 	limit := parseLimit(r, 50)
 
+	cacheKey := fmt.Sprintf("events:%s:%s:%d", domain, r.URL.Query().Get("period"), limit)
+	var data []EventItem
+	if h.cache.Get(cacheKey, &data) {
+		writeJSON(w, data)
+		return
+	}
+
 	data, err := h.store.GetRecentEvents(r.Context(), domain, from, to, limit)
 	if err != nil {
 		writeError(w, err, http.StatusInternalServerError)
 		return
 	}
+	h.cache.Set(cacheKey, data)
 	writeJSON(w, data)
 }
 

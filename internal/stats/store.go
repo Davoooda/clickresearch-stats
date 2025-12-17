@@ -12,10 +12,11 @@ import (
 )
 
 type Store struct {
-	db        *sql.DB
-	mu        sync.Mutex
-	parquetPath string
-	ready     bool
+	db             *sql.DB
+	mu             sync.Mutex
+	parquetPath    string
+	ready          bool
+	useMemoryTable bool
 }
 
 type Config struct {
@@ -63,12 +64,33 @@ func (s *Store) initS3(cfg Config) {
 		}
 	}
 
+	// Pre-load data into memory table for faster queries
+	log.Println("DuckDB: loading data into memory...")
+	createTable := fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS events AS
+		SELECT * FROM %s
+	`, s.tableSource())
+
+	if _, err := s.db.Exec(createTable); err != nil {
+		log.Printf("DuckDB: failed to create memory table: %v (will use S3 directly)", err)
+	} else {
+		s.useMemoryTable = true
+		log.Println("DuckDB: data loaded into memory")
+	}
+
 	s.ready = true
 	log.Println("DuckDB: S3 access initialized successfully")
 }
 
 func (s *Store) Close() error {
 	return s.db.Close()
+}
+
+func (s *Store) tableSource() string {
+	if s.useMemoryTable {
+		return "events"
+	}
+	return fmt.Sprintf("read_parquet('%s')", s.parquetPath)
 }
 
 // Overview stats
@@ -91,11 +113,11 @@ func (s *Store) GetOverview(ctx context.Context, domain string, from, to time.Ti
 			COUNT(*) FILTER (WHERE name = 'pageview') as pageviews,
 			COUNT(DISTINCT visitor_id) as unique_visitors,
 			COUNT(*) as events
-		FROM read_parquet('%s')
+		FROM %s
 		WHERE domain = $1
 		AND epoch_us(timestamp) >= $2
 		AND epoch_us(timestamp) < $3
-	`, s.parquetPath)
+	`, s.tableSource())
 
 	var o Overview
 	err := s.db.QueryRowContext(ctx, query, domain, from.UnixMicro(), to.UnixMicro()).Scan(
@@ -130,14 +152,14 @@ func (s *Store) GetPageviewsTimeSeries(ctx context.Context, domain string, from,
 		SELECT
 			%s as time_bucket,
 			COUNT(*) as count
-		FROM read_parquet('%s')
+		FROM %s
 		WHERE domain = $1
 		AND name = 'pageview'
 		AND epoch_us(timestamp) >= $2
 		AND epoch_us(timestamp) < $3
 		GROUP BY time_bucket
 		ORDER BY time_bucket
-	`, dateFormat, s.parquetPath)
+	`, dateFormat, s.tableSource())
 
 	rows, err := s.db.QueryContext(ctx, query, domain, from.UnixMicro(), to.UnixMicro())
 	if err != nil {
@@ -187,7 +209,7 @@ func (s *Store) GetTopSources(ctx context.Context, domain string, from, to time.
 				ELSE regexp_extract(referrer, 'https?://([^/]+)', 1)
 			END as source,
 			COUNT(*) as count
-		FROM read_parquet('%s')
+		FROM %s
 		WHERE domain = $1
 		AND name = 'pageview'
 		AND epoch_us(timestamp) >= $2
@@ -195,7 +217,7 @@ func (s *Store) GetTopSources(ctx context.Context, domain string, from, to time.
 		GROUP BY source
 		ORDER BY count DESC
 		LIMIT $4
-	`, s.parquetPath)
+	`, s.tableSource())
 
 	rows, err := s.db.QueryContext(ctx, query, domain, from.UnixMicro(), to.UnixMicro(), limit)
 	if err != nil {
@@ -235,7 +257,7 @@ func (s *Store) getTopBy(ctx context.Context, field, eventFilter, domain string,
 		SELECT
 			COALESCE(NULLIF(%s, ''), 'Unknown') as name,
 			COUNT(*) as count
-		FROM read_parquet('%s')
+		FROM %s
 		WHERE domain = $1
 		%s
 		AND epoch_us(timestamp) >= $2
@@ -243,7 +265,7 @@ func (s *Store) getTopBy(ctx context.Context, field, eventFilter, domain string,
 		GROUP BY 1
 		ORDER BY count DESC
 		LIMIT $4
-	`, field, s.parquetPath, eventClause)
+	`, field, s.tableSource(), eventClause)
 
 	rows, err := s.db.QueryContext(ctx, query, domain, from.UnixMicro(), to.UnixMicro(), limit)
 	if err != nil {
@@ -298,13 +320,13 @@ func (s *Store) GetRecentEvents(ctx context.Context, domain string, from, to tim
 			COALESCE(device, 'desktop') as device,
 			timestamp as ts,
 			COALESCE(props, '') as props
-		FROM read_parquet('%s')
+		FROM %s
 		WHERE domain = $1
 		AND epoch_us(timestamp) >= $2
 		AND epoch_us(timestamp) < $3
 		ORDER BY timestamp DESC
 		LIMIT $4
-	`, s.parquetPath)
+	`, s.tableSource())
 
 	rows, err := s.db.QueryContext(ctx, query, domain, from.UnixMicro(), to.UnixMicro(), limit)
 	if err != nil {
@@ -363,13 +385,13 @@ func (s *Store) GetFunnel(ctx context.Context, domain string, from, to time.Time
 	for i, step := range steps {
 		query := fmt.Sprintf(`
 			SELECT COUNT(DISTINCT visitor_id)
-			FROM read_parquet('%s')
+			FROM %s
 			WHERE domain = $1
 			AND name = 'pageview'
 			AND pathname = $2
 			AND epoch_us(timestamp) >= $3
 			AND epoch_us(timestamp) < $4
-		`, s.parquetPath)
+		`, s.tableSource())
 
 		var count int64
 		s.db.QueryRowContext(ctx, query, domain, step, from.UnixMicro(), to.UnixMicro()).Scan(&count)
@@ -439,7 +461,7 @@ func (s *Store) GetAutocaptureEvents(ctx context.Context, domain string, from, t
 			name as event_type,
 			COALESCE(pathname, '') as pathname,
 			COUNT(*) as count
-		FROM read_parquet('%s')
+		FROM %s
 		WHERE domain = $1
 		AND name IN ('click', 'submit', 'change')
 		AND epoch_us(timestamp) >= $2
@@ -447,7 +469,7 @@ func (s *Store) GetAutocaptureEvents(ctx context.Context, domain string, from, t
 		GROUP BY name, pathname
 		ORDER BY count DESC
 		LIMIT $4
-	`, s.parquetPath)
+	`, s.tableSource())
 
 	rows, err := s.db.QueryContext(ctx, query, domain, from.UnixMicro(), to.UnixMicro(), limit)
 	if err != nil {
