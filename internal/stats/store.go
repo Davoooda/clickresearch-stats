@@ -64,22 +64,42 @@ func (s *Store) initS3(cfg Config) {
 		}
 	}
 
-	// Pre-load data into memory table for faster queries
-	log.Println("DuckDB: loading data into memory...")
-	createTable := fmt.Sprintf(`
-		CREATE TABLE IF NOT EXISTS events AS
-		SELECT * FROM %s
-	`, s.tableSource())
-
-	if _, err := s.db.Exec(createTable); err != nil {
-		log.Printf("DuckDB: failed to create memory table: %v (will use S3 directly)", err)
-	} else {
-		s.useMemoryTable = true
-		log.Println("DuckDB: data loaded into memory")
-	}
+	// Initial load
+	s.refreshMemoryTable()
 
 	s.ready = true
 	log.Println("DuckDB: S3 access initialized successfully")
+
+	// Periodic refresh every 5 minutes
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		for range ticker.C {
+			s.refreshMemoryTable()
+		}
+	}()
+}
+
+func (s *Store) refreshMemoryTable() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	log.Println("DuckDB: refreshing data from S3...")
+
+	// Drop and recreate table
+	s.db.Exec("DROP TABLE IF EXISTS events")
+
+	createTable := fmt.Sprintf(`
+		CREATE TABLE events AS
+		SELECT * FROM read_parquet('%s')
+	`, s.parquetPath)
+
+	if _, err := s.db.Exec(createTable); err != nil {
+		log.Printf("DuckDB: failed to refresh memory table: %v", err)
+		s.useMemoryTable = false
+	} else {
+		s.useMemoryTable = true
+		log.Println("DuckDB: data refreshed")
+	}
 }
 
 func (s *Store) Close() error {
