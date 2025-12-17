@@ -340,11 +340,19 @@ func (h *Handler) HandleUniquePages(w http.ResponseWriter, r *http.Request) {
 	domain, from, to := parseParams(r)
 	limit := parseLimit(r, 100)
 
+	cacheKey := fmt.Sprintf("unique-pages:%s:%s:%d", domain, r.URL.Query().Get("period"), limit)
+	var data []PageItem
+	if h.cache.Get(cacheKey, &data) {
+		writeJSON(w, data)
+		return
+	}
+
 	data, err := h.store.GetUniquePages(r.Context(), domain, from, to, limit)
 	if err != nil {
 		writeError(w, err, http.StatusInternalServerError)
 		return
 	}
+	h.cache.Set(cacheKey, data)
 	writeJSON(w, data)
 }
 
@@ -357,11 +365,19 @@ func (h *Handler) HandleAutocaptureEvents(w http.ResponseWriter, r *http.Request
 	domain, from, to := parseParams(r)
 	limit := parseLimit(r, 100)
 
+	cacheKey := fmt.Sprintf("autocapture-events:%s:%s:%d", domain, r.URL.Query().Get("period"), limit)
+	var data []AutocaptureEvent
+	if h.cache.Get(cacheKey, &data) {
+		writeJSON(w, data)
+		return
+	}
+
 	data, err := h.store.GetAutocaptureEvents(r.Context(), domain, from, to, limit)
 	if err != nil {
 		writeError(w, err, http.StatusInternalServerError)
 		return
 	}
+	h.cache.Set(cacheKey, data)
 	writeJSON(w, data)
 }
 
@@ -369,6 +385,62 @@ func (h *Handler) HandleAutocaptureEvents(w http.ResponseWriter, r *http.Request
 type FunnelAdvancedRequest struct {
 	Steps  []FunnelStepDef `json:"steps"`
 	Window int             `json:"window"` // minutes
+}
+
+// FunnelPageInit returns pages + events in one request
+type FunnelPageInit struct {
+	Pages  []PageItem          `json:"pages"`
+	Events []AutocaptureEvent  `json:"events"`
+}
+
+func (h *Handler) HandleFunnelInit(w http.ResponseWriter, r *http.Request) {
+	if h.store == nil {
+		writeError(w, nil, http.StatusServiceUnavailable)
+		return
+	}
+
+	domain, from, to := parseParams(r)
+	limit := 100
+
+	// Check cache first
+	cacheKey := fmt.Sprintf("funnel-init:%s:%s", domain, r.URL.Query().Get("period"))
+	var cached FunnelPageInit
+	if h.cache.Get(cacheKey, &cached) {
+		writeJSON(w, cached)
+		return
+	}
+
+	// Fetch both in parallel using goroutines
+	var pages []PageItem
+	var events []AutocaptureEvent
+	var pagesErr, eventsErr error
+
+	done := make(chan bool, 2)
+
+	go func() {
+		pages, pagesErr = h.store.GetUniquePages(r.Context(), domain, from, to, limit)
+		done <- true
+	}()
+
+	go func() {
+		events, eventsErr = h.store.GetAutocaptureEvents(r.Context(), domain, from, to, limit)
+		done <- true
+	}()
+
+	<-done
+	<-done
+
+	if pagesErr != nil || eventsErr != nil {
+		writeError(w, pagesErr, http.StatusInternalServerError)
+		return
+	}
+
+	result := FunnelPageInit{
+		Pages:  pages,
+		Events: events,
+	}
+	h.cache.Set(cacheKey, result)
+	writeJSON(w, result)
 }
 
 func (h *Handler) HandleFunnelAdvanced(w http.ResponseWriter, r *http.Request) {

@@ -209,6 +209,9 @@ type TopItem struct {
 	Count int64  `json:"count"`
 }
 
+// PageItem is alias for TopItem for unique pages
+type PageItem = TopItem
+
 func (s *Store) GetTopPages(ctx context.Context, domain string, from, to time.Time, limit int) ([]TopItem, error) {
 	return s.getTopBy(ctx, "pathname", "pageview", domain, from, to, limit)
 }
@@ -479,6 +482,8 @@ func (s *Store) GetAutocaptureEvents(ctx context.Context, domain string, from, t
 	query := fmt.Sprintf(`
 		SELECT
 			name as event_type,
+			COALESCE(json_extract_string(props, '$.text'), '') as text,
+			COALESCE(json_extract_string(props, '$.tag'), '') as tag,
 			COALESCE(pathname, '') as pathname,
 			COUNT(*) as count
 		FROM %s
@@ -486,7 +491,7 @@ func (s *Store) GetAutocaptureEvents(ctx context.Context, domain string, from, t
 		AND name IN ('click', 'submit', 'change')
 		AND epoch_us(timestamp) >= $2
 		AND epoch_us(timestamp) < $3
-		GROUP BY name, pathname
+		GROUP BY name, json_extract_string(props, '$.text'), json_extract_string(props, '$.tag'), pathname
 		ORDER BY count DESC
 		LIMIT $4
 	`, s.tableSource())
@@ -500,7 +505,7 @@ func (s *Store) GetAutocaptureEvents(ctx context.Context, domain string, from, t
 	var result []AutocaptureEvent
 	for rows.Next() {
 		var e AutocaptureEvent
-		if err := rows.Scan(&e.EventType, &e.Pathname, &e.Count); err != nil {
+		if err := rows.Scan(&e.EventType, &e.Text, &e.Tag, &e.Pathname, &e.Count); err != nil {
 			continue
 		}
 		result = append(result, e)

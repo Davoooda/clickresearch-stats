@@ -70,6 +70,7 @@ func main() {
 	mux.HandleFunc("/api/stats/event-breakdown", statsHandler.HandleEventBreakdown)
 	mux.HandleFunc("/api/stats/unique-pages", statsHandler.HandleUniquePages)
 	mux.HandleFunc("/api/stats/autocapture-events", statsHandler.HandleAutocaptureEvents)
+	mux.HandleFunc("/api/stats/funnel-init", statsHandler.HandleFunnelInit)
 
 	// Auth endpoints
 	if authHandler != nil {
