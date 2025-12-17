@@ -22,12 +22,15 @@ func main() {
 	}
 
 	// DuckDB store for analytics
+	// If LOCAL_PARQUET_PATH is set, read from local files (faster)
+	// Otherwise fall back to S3
 	store, err := stats.NewStore(stats.Config{
 		S3Endpoint: os.Getenv("S3_ENDPOINT"),
 		S3Key:      os.Getenv("S3_KEY"),
 		S3Secret:   os.Getenv("S3_SECRET"),
 		Bucket:     os.Getenv("S3_BUCKET"),
 		Prefix:     os.Getenv("S3_PREFIX"),
+		LocalPath:  os.Getenv("LOCAL_PARQUET_PATH"),
 	})
 	if err != nil {
 		log.Fatalf("Failed to create stats store: %v", err)

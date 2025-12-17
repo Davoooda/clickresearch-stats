@@ -25,23 +25,48 @@ type Config struct {
 	S3Secret   string
 	Bucket     string
 	Prefix     string
+	LocalPath  string // If set, read from local files instead of S3
 }
 
 func NewStore(cfg Config) (*Store, error) {
-	db, err := sql.Open("duckdb", "?threads=2&memory_limit=512MB")
+	db, err := sql.Open("duckdb", "?threads=2&memory_limit=1GB")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open duckdb: %w", err)
 	}
 
 	s := &Store{
-		db:          db,
-		parquetPath: fmt.Sprintf("s3://%s/%s**/*.parquet", cfg.Bucket, cfg.Prefix),
+		db: db,
 	}
 
-	// Initialize S3 access
-	go s.initS3(cfg)
+	// Use local path if configured, otherwise S3
+	if cfg.LocalPath != "" {
+		s.parquetPath = cfg.LocalPath + "/**/*.parquet"
+		log.Printf("DuckDB: using local parquet path: %s", s.parquetPath)
+		go s.initLocal()
+	} else {
+		s.parquetPath = fmt.Sprintf("s3://%s/%s**/*.parquet", cfg.Bucket, cfg.Prefix)
+		go s.initS3(cfg)
+	}
 
 	return s, nil
+}
+
+func (s *Store) initLocal() {
+	log.Println("DuckDB: initializing local parquet access...")
+
+	// Initial load
+	s.refreshMemoryTable()
+
+	s.ready = true
+	log.Println("DuckDB: local parquet initialized successfully")
+
+	// Periodic refresh every 2 minutes (local is fast)
+	go func() {
+		ticker := time.NewTicker(2 * time.Minute)
+		for range ticker.C {
+			s.refreshMemoryTable()
+		}
+	}()
 }
 
 func (s *Store) initS3(cfg Config) {
