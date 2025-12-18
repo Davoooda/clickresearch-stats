@@ -79,6 +79,7 @@ func main() {
 	if authHandler != nil {
 		mux.HandleFunc("/api/auth/register", authHandler.HandleRegister)
 		mux.HandleFunc("/api/auth/login", authHandler.HandleLogin)
+		mux.HandleFunc("/api/auth/demo", authHandler.HandleDemoLogin)
 		mux.HandleFunc("/api/auth/me", authHandler.HandleMe)
 		mux.HandleFunc("/api/auth/google", authHandler.HandleGoogleLogin)
 		mux.HandleFunc("/api/auth/google/callback", authHandler.HandleGoogleCallback)

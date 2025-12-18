@@ -634,6 +634,12 @@ func (h *Handler) HandleCreateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Demo users cannot create projects
+	if user.Role == "demo" {
+		writeJSON(w, map[string]string{"error": "Demo mode is read-only"}, http.StatusForbidden)
+		return
+	}
+
 	var req CreateProjectRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, map[string]string{"error": "Invalid request"}, http.StatusBadRequest)
@@ -668,6 +674,12 @@ func (h *Handler) HandleDeleteProject(w http.ResponseWriter, r *http.Request) {
 	user, err := h.getUserFromRequest(r)
 	if err != nil {
 		writeJSON(w, map[string]string{"error": "Unauthorized"}, http.StatusUnauthorized)
+		return
+	}
+
+	// Demo users cannot delete projects
+	if user.Role == "demo" {
+		writeJSON(w, map[string]string{"error": "Demo mode is read-only"}, http.StatusForbidden)
 		return
 	}
 
@@ -915,6 +927,12 @@ func (h *Handler) HandleCreateFunnel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Demo users cannot create funnels
+	if user.Role == "demo" {
+		writeJSON(w, map[string]string{"error": "Demo mode is read-only"}, http.StatusForbidden)
+		return
+	}
+
 	domain := r.URL.Query().Get("domain")
 	if domain == "" {
 		writeJSON(w, map[string]string{"error": "Domain required"}, http.StatusBadRequest)
@@ -963,6 +981,12 @@ func (h *Handler) HandleUpdateFunnel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Demo users cannot update funnels
+	if user.Role == "demo" {
+		writeJSON(w, map[string]string{"error": "Demo mode is read-only"}, http.StatusForbidden)
+		return
+	}
+
 	domain := r.URL.Query().Get("domain")
 	funnelID := r.URL.Query().Get("id")
 	if domain == "" || funnelID == "" {
@@ -1007,6 +1031,12 @@ func (h *Handler) HandleDeleteFunnel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Demo users cannot delete funnels
+	if user.Role == "demo" {
+		writeJSON(w, map[string]string{"error": "Demo mode is read-only"}, http.StatusForbidden)
+		return
+	}
+
 	domain := r.URL.Query().Get("domain")
 	funnelID := r.URL.Query().Get("id")
 	if domain == "" || funnelID == "" {
@@ -1027,4 +1057,28 @@ func (h *Handler) HandleDeleteFunnel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, map[string]string{"status": "deleted"}, http.StatusOK)
+}
+
+// HandleDemoLogin returns a token for the demo user (read-only access)
+func (h *Handler) HandleDemoLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Get demo user by fixed email
+	user, err := h.db.GetUserByEmail("demo@shortid.me")
+	if err != nil {
+		writeJSON(w, map[string]string{"error": "Demo mode not available"}, http.StatusNotFound)
+		return
+	}
+
+	// Generate token with demo role
+	token, err := h.generateToken(user)
+	if err != nil {
+		writeJSON(w, map[string]string{"error": "Failed to generate token"}, http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, AuthResponse{Token: token, User: user}, http.StatusOK)
 }
