@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -11,10 +12,13 @@ import (
 )
 
 type ClickHouseStore struct {
-	conn      driver.Conn
-	s3Path    string
-	s3Key     string
-	s3Secret  string
+	conn       driver.Conn
+	s3Path     string
+	s3Key      string
+	s3Secret   string
+	stopCh     chan struct{}
+	lastSync   time.Time
+	syncMu     sync.Mutex
 }
 
 type ClickHouseConfig struct {
@@ -34,7 +38,7 @@ func NewClickHouseStore(cfg ClickHouseConfig) (*ClickHouseStore, error) {
 			Database: cfg.Database,
 		},
 		Settings: clickhouse.Settings{
-			"max_execution_time": 60,
+			"max_execution_time": 300,
 		},
 		Compression: &clickhouse.Compression{
 			Method: clickhouse.CompressionLZ4,
@@ -55,22 +59,126 @@ func NewClickHouseStore(cfg ClickHouseConfig) (*ClickHouseStore, error) {
 	s3Path := fmt.Sprintf("https://%s/%s/%s**/*.parquet",
 		cfg.S3Endpoint, cfg.S3Bucket, cfg.S3Prefix)
 
-	log.Printf("ClickHouse: connected, reading from %s", s3Path)
+	log.Printf("ClickHouse: connected, syncing from %s", s3Path)
 
-	return &ClickHouseStore{
+	store := &ClickHouseStore{
 		conn:     conn,
 		s3Path:   s3Path,
 		s3Key:    cfg.S3Key,
 		s3Secret: cfg.S3Secret,
-	}, nil
+		stopCh:   make(chan struct{}),
+	}
+
+	// Create local table if not exists
+	if err := store.ensureTable(); err != nil {
+		return nil, fmt.Errorf("failed to create events table: %w", err)
+	}
+
+	// Initial sync from S3
+	if err := store.syncFromS3(); err != nil {
+		log.Printf("Warning: initial S3 sync failed: %v", err)
+	}
+
+	// Start background refresh every 5 minutes
+	go store.refreshLoop()
+
+	return store, nil
 }
 
 func (s *ClickHouseStore) Close() error {
+	close(s.stopCh)
 	return s.conn.Close()
 }
 
+func (s *ClickHouseStore) ensureTable() error {
+	ctx := context.Background()
+
+	createTable := `
+		CREATE TABLE IF NOT EXISTS events (
+			domain LowCardinality(String),
+			visitor_id String,
+			session_id String DEFAULT '',
+			name LowCardinality(String),
+			url String DEFAULT '',
+			pathname String DEFAULT '',
+			referrer String DEFAULT '',
+			utm_source LowCardinality(String) DEFAULT '',
+			utm_medium LowCardinality(String) DEFAULT '',
+			utm_campaign LowCardinality(String) DEFAULT '',
+			utm_term String DEFAULT '',
+			utm_content String DEFAULT '',
+			timestamp DateTime64(6, 'UTC'),
+			received_at DateTime64(6, 'UTC'),
+			browser LowCardinality(String) DEFAULT '',
+			browser_version LowCardinality(String) DEFAULT '',
+			os LowCardinality(String) DEFAULT '',
+			os_version LowCardinality(String) DEFAULT '',
+			device LowCardinality(String) DEFAULT '',
+			country LowCardinality(String) DEFAULT '',
+			city LowCardinality(String) DEFAULT '',
+			props String DEFAULT '{}'
+		)
+		ENGINE = ReplacingMergeTree()
+		PARTITION BY toYYYYMM(timestamp)
+		ORDER BY (domain, timestamp, visitor_id, name, pathname)
+		TTL timestamp + INTERVAL 1 YEAR
+		SETTINGS index_granularity = 8192
+	`
+	return s.conn.Exec(ctx, createTable)
+}
+
+func (s *ClickHouseStore) syncFromS3() error {
+	s.syncMu.Lock()
+	defer s.syncMu.Unlock()
+
+	ctx := context.Background()
+	start := time.Now()
+
+	// Truncate and reload from S3 (simple approach for now)
+	// In production, could do incremental sync based on received_at
+	if err := s.conn.Exec(ctx, "TRUNCATE TABLE events"); err != nil {
+		return fmt.Errorf("truncate failed: %w", err)
+	}
+
+	insertQuery := fmt.Sprintf(`
+		INSERT INTO events
+		SELECT * FROM s3('%s', '%s', '%s', 'Parquet')
+	`, s.s3Path, s.s3Key, s.s3Secret)
+
+	if err := s.conn.Exec(ctx, insertQuery); err != nil {
+		return fmt.Errorf("insert from s3 failed: %w", err)
+	}
+
+	// Get row count
+	var count uint64
+	s.conn.QueryRow(ctx, "SELECT count() FROM events").Scan(&count)
+
+	s.lastSync = time.Now()
+	log.Printf("ClickHouse: synced %d events from S3 in %v", count, time.Since(start))
+
+	return nil
+}
+
+func (s *ClickHouseStore) refreshLoop() {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-s.stopCh:
+			log.Println("ClickHouse: refresh loop stopped")
+			return
+		case <-ticker.C:
+			if err := s.syncFromS3(); err != nil {
+				log.Printf("ClickHouse: sync error: %v", err)
+			}
+		}
+	}
+}
+
 func (s *ClickHouseStore) s3Source() string {
-	return fmt.Sprintf("s3('%s', '%s', '%s', 'Parquet')", s.s3Path, s.s3Key, s.s3Secret)
+	// Now read from local table instead of S3
+	return "events"
 }
 
 // Overview stats
