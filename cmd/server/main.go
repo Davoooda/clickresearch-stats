@@ -21,17 +21,32 @@ func main() {
 		port = "8080"
 	}
 
-	// DuckDB store for analytics
-	// If LOCAL_PARQUET_PATH is set, read from local files (faster)
-	// Otherwise fall back to S3
-	store, err := stats.NewStore(stats.Config{
-		S3Endpoint: os.Getenv("S3_ENDPOINT"),
-		S3Key:      os.Getenv("S3_KEY"),
-		S3Secret:   os.Getenv("S3_SECRET"),
-		Bucket:     os.Getenv("S3_BUCKET"),
-		Prefix:     os.Getenv("S3_PREFIX"),
-		LocalPath:  os.Getenv("LOCAL_PARQUET_PATH"),
-	})
+	// Analytics store - ClickHouse or DuckDB based on feature flag
+	var store stats.StoreInterface
+	var err error
+
+	if os.Getenv("USE_CLICKHOUSE") == "true" {
+		log.Println("Using ClickHouse store")
+		store, err = stats.NewClickHouseStore(stats.ClickHouseConfig{
+			Addr:       os.Getenv("CLICKHOUSE_ADDR"),
+			Database:   os.Getenv("CLICKHOUSE_DB"),
+			S3Endpoint: os.Getenv("S3_ENDPOINT"),
+			S3Key:      os.Getenv("S3_KEY"),
+			S3Secret:   os.Getenv("S3_SECRET"),
+			S3Bucket:   os.Getenv("S3_BUCKET"),
+			S3Prefix:   os.Getenv("S3_PREFIX"),
+		})
+	} else {
+		log.Println("Using DuckDB store")
+		store, err = stats.NewStore(stats.Config{
+			S3Endpoint: os.Getenv("S3_ENDPOINT"),
+			S3Key:      os.Getenv("S3_KEY"),
+			S3Secret:   os.Getenv("S3_SECRET"),
+			Bucket:     os.Getenv("S3_BUCKET"),
+			Prefix:     os.Getenv("S3_PREFIX"),
+			LocalPath:  os.Getenv("LOCAL_PARQUET_PATH"),
+		})
+	}
 	if err != nil {
 		log.Fatalf("Failed to create stats store: %v", err)
 	}
@@ -67,6 +82,7 @@ func main() {
 	mux.HandleFunc("/api/stats/sources", statsHandler.HandleSources)
 	mux.HandleFunc("/api/stats/devices", statsHandler.HandleDevices)
 	mux.HandleFunc("/api/stats/geo", statsHandler.HandleGeo)
+	mux.HandleFunc("/api/stats/utm", statsHandler.HandleUTM)
 	mux.HandleFunc("/api/stats/events", statsHandler.HandleEvents)
 	mux.HandleFunc("/api/stats/funnel", statsHandler.HandleFunnel)
 	mux.HandleFunc("/api/stats/funnel-advanced", statsHandler.HandleFunnelAdvanced)

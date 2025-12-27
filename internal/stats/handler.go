@@ -11,11 +11,11 @@ import (
 )
 
 type Handler struct {
-	store *Store
+	store StoreInterface
 	cache *cache.Cache
 }
 
-func NewHandler(store *Store) *Handler {
+func NewHandler(store StoreInterface) *Handler {
 	return &Handler{
 		store: store,
 		cache: cache.New(5 * time.Minute), // 5 min TTL
@@ -228,6 +228,56 @@ func (h *Handler) HandleGeo(w http.ResponseWriter, r *http.Request) {
 	}
 	h.cache.Set(cacheKey, data)
 	writeJSON(w, data)
+}
+
+// UTMData holds all UTM dimensions
+type UTMData struct {
+	Sources   []TopItem `json:"sources"`
+	Mediums   []TopItem `json:"mediums"`
+	Campaigns []TopItem `json:"campaigns"`
+}
+
+func (h *Handler) HandleUTM(w http.ResponseWriter, r *http.Request) {
+	if h.store == nil {
+		writeError(w, nil, http.StatusServiceUnavailable)
+		return
+	}
+
+	domain, from, to := parseParams(r)
+	limit := parseLimit(r, 10)
+
+	cacheKey := fmt.Sprintf("utm:%s:%s:%d", domain, r.URL.Query().Get("period"), limit)
+	var cached UTMData
+	if h.cache.Get(cacheKey, &cached) {
+		writeJSON(w, cached)
+		return
+	}
+
+	sources, err := h.store.GetTopUTMSources(r.Context(), domain, from, to, limit)
+	if err != nil {
+		writeError(w, err, http.StatusInternalServerError)
+		return
+	}
+
+	mediums, err := h.store.GetTopUTMMediums(r.Context(), domain, from, to, limit)
+	if err != nil {
+		writeError(w, err, http.StatusInternalServerError)
+		return
+	}
+
+	campaigns, err := h.store.GetTopUTMCampaigns(r.Context(), domain, from, to, limit)
+	if err != nil {
+		writeError(w, err, http.StatusInternalServerError)
+		return
+	}
+
+	result := UTMData{
+		Sources:   sources,
+		Mediums:   mediums,
+		Campaigns: campaigns,
+	}
+	h.cache.Set(cacheKey, result)
+	writeJSON(w, result)
 }
 
 func parseLimit(r *http.Request, defaultVal int) int {

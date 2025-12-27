@@ -288,6 +288,57 @@ func (s *Store) GetTopDevices(ctx context.Context, domain string, from, to time.
 	return s.getTopBy(ctx, "device", "", domain, from, to, limit)
 }
 
+// UTM stats
+func (s *Store) GetTopUTMSources(ctx context.Context, domain string, from, to time.Time, limit int) ([]TopItem, error) {
+	return s.getTopByNonEmpty(ctx, "utm_source", "pageview", domain, from, to, limit)
+}
+
+func (s *Store) GetTopUTMMediums(ctx context.Context, domain string, from, to time.Time, limit int) ([]TopItem, error) {
+	return s.getTopByNonEmpty(ctx, "utm_medium", "pageview", domain, from, to, limit)
+}
+
+func (s *Store) GetTopUTMCampaigns(ctx context.Context, domain string, from, to time.Time, limit int) ([]TopItem, error) {
+	return s.getTopByNonEmpty(ctx, "utm_campaign", "pageview", domain, from, to, limit)
+}
+
+// getTopByNonEmpty excludes empty/null values (for UTM params)
+func (s *Store) getTopByNonEmpty(ctx context.Context, field, eventFilter, domain string, from, to time.Time, limit int) ([]TopItem, error) {
+	if !s.ready {
+		return nil, nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	eventClause := ""
+	if eventFilter != "" {
+		eventClause = fmt.Sprintf("AND name = '%s'", eventFilter)
+	}
+
+	query := fmt.Sprintf(`
+		SELECT
+			%s as name,
+			COUNT(*) as count
+		FROM %s
+		WHERE domain = $1
+		%s
+		AND %s IS NOT NULL AND %s != ''
+		AND epoch_us(timestamp) >= $2
+		AND epoch_us(timestamp) < $3
+		GROUP BY 1
+		ORDER BY count DESC
+		LIMIT $4
+	`, field, s.tableSource(), eventClause, field, field)
+
+	rows, err := s.db.QueryContext(ctx, query, domain, from.UnixMicro(), to.UnixMicro(), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	return scanTopItems(rows)
+}
+
 func (s *Store) getTopBy(ctx context.Context, field, eventFilter, domain string, from, to time.Time, limit int) ([]TopItem, error) {
 	if !s.ready {
 		return nil, nil
