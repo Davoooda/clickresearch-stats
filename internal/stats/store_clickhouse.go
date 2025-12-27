@@ -87,7 +87,7 @@ func (s *ClickHouseStore) GetOverview(ctx context.Context, domain string, from, 
 	`, s.s3Source())
 
 	var o Overview
-	row := s.conn.QueryRow(ctx, query, domain, from.UnixMicro(), to.UnixMicro())
+	row := s.conn.QueryRow(ctx, query, domain, from, to)
 	if err := row.Scan(&o.Pageviews, &o.UniqueVisitors, &o.Events); err != nil {
 		return nil, err
 	}
@@ -96,9 +96,9 @@ func (s *ClickHouseStore) GetOverview(ctx context.Context, domain string, from, 
 
 // Time series for charts
 func (s *ClickHouseStore) GetPageviewsTimeSeries(ctx context.Context, domain string, from, to time.Time, interval string) ([]TimeSeriesPoint, error) {
-	dateFunc := "toStartOfDay(fromUnixTimestamp64Micro(timestamp))"
+	dateFunc := "toStartOfDay(timestamp)"
 	if interval == "hour" {
-		dateFunc = "toStartOfHour(fromUnixTimestamp64Micro(timestamp))"
+		dateFunc = "toStartOfHour(timestamp)"
 	}
 
 	query := fmt.Sprintf(`
@@ -114,7 +114,7 @@ func (s *ClickHouseStore) GetPageviewsTimeSeries(ctx context.Context, domain str
 		ORDER BY time_bucket
 	`, dateFunc, s.s3Source())
 
-	rows, err := s.conn.Query(ctx, query, domain, from.UnixMicro(), to.UnixMicro())
+	rows, err := s.conn.Query(ctx, query, domain, from, to)
 	if err != nil {
 		return nil, err
 	}
@@ -161,7 +161,7 @@ func (s *ClickHouseStore) GetTopSources(ctx context.Context, domain string, from
 		LIMIT ?
 	`, s.s3Source())
 
-	rows, err := s.conn.Query(ctx, query, domain, domain, from.UnixMicro(), to.UnixMicro(), limit)
+	rows, err := s.conn.Query(ctx, query, domain, domain, from, to, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -219,7 +219,7 @@ func (s *ClickHouseStore) getTopByNonEmpty(ctx context.Context, field, eventFilt
 		LIMIT ?
 	`, field, s.s3Source(), eventClause, field, field)
 
-	rows, err := s.conn.Query(ctx, query, domain, from.UnixMicro(), to.UnixMicro(), limit)
+	rows, err := s.conn.Query(ctx, query, domain, from, to, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -248,7 +248,7 @@ func (s *ClickHouseStore) getTopBy(ctx context.Context, field, eventFilter, doma
 		LIMIT ?
 	`, field, field, field, s.s3Source(), eventClause)
 
-	rows, err := s.conn.Query(ctx, query, domain, from.UnixMicro(), to.UnixMicro(), limit)
+	rows, err := s.conn.Query(ctx, query, domain, from, to, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -282,7 +282,7 @@ func (s *ClickHouseStore) GetRecentEvents(ctx context.Context, domain string, fr
 			if(browser = '' OR browser IS NULL, 'Unknown', browser) as browser,
 			if(os = '' OR os IS NULL, 'Unknown', os) as os,
 			if(device = '' OR device IS NULL, 'desktop', device) as device,
-			fromUnixTimestamp64Micro(timestamp) as ts,
+			timestamp as ts,
 			ifNull(props, '') as props
 		FROM %s
 		WHERE domain = ?
@@ -292,7 +292,7 @@ func (s *ClickHouseStore) GetRecentEvents(ctx context.Context, domain string, fr
 		LIMIT ?
 	`, s.s3Source())
 
-	rows, err := s.conn.Query(ctx, query, domain, from.UnixMicro(), to.UnixMicro(), limit)
+	rows, err := s.conn.Query(ctx, query, domain, from, to, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -343,7 +343,7 @@ func (s *ClickHouseStore) GetFunnel(ctx context.Context, domain string, from, to
 		`, s.s3Source())
 
 		var count uint64
-		s.conn.QueryRow(ctx, query, domain, step, from.UnixMicro(), to.UnixMicro()).Scan(&count)
+		s.conn.QueryRow(ctx, query, domain, step, from, to).Scan(&count)
 
 		result.Steps[i] = FunnelStep{
 			Name:  step,
@@ -399,7 +399,7 @@ func (s *ClickHouseStore) GetAutocaptureEvents(ctx context.Context, domain strin
 		LIMIT ?
 	`, s.s3Source())
 
-	rows, err := s.conn.Query(ctx, query, domain, from.UnixMicro(), to.UnixMicro(), limit)
+	rows, err := s.conn.Query(ctx, query, domain, from, to, limit)
 	if err != nil {
 		return nil, err
 	}
