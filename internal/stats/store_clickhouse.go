@@ -86,12 +86,16 @@ func (s *ClickHouseStore) GetOverview(ctx context.Context, domain string, from, 
 		AND timestamp < ?
 	`, s.s3Source())
 
-	var o Overview
+	var pageviews, uniqueVisitors, events uint64
 	row := s.conn.QueryRow(ctx, query, domain, from, to)
-	if err := row.Scan(&o.Pageviews, &o.UniqueVisitors, &o.Events); err != nil {
+	if err := row.Scan(&pageviews, &uniqueVisitors, &events); err != nil {
 		return nil, err
 	}
-	return &o, nil
+	return &Overview{
+		Pageviews:      int64(pageviews),
+		UniqueVisitors: int64(uniqueVisitors),
+		Events:         int64(events),
+	}, nil
 }
 
 // Time series for charts
