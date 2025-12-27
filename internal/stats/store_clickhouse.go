@@ -121,7 +121,7 @@ func (s *ClickHouseStore) ensureTable() error {
 		ENGINE = ReplacingMergeTree()
 		PARTITION BY toYYYYMM(timestamp)
 		ORDER BY (domain, timestamp, visitor_id, name, pathname)
-		TTL timestamp + INTERVAL 1 YEAR
+		TTL toDate(timestamp) + INTERVAL 1 YEAR
 		SETTINGS index_granularity = 8192
 	`
 	return s.conn.Exec(ctx, createTable)
