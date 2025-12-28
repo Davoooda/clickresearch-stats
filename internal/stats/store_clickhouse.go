@@ -93,22 +93,20 @@ func (s *ClickHouseStore) Close() error {
 func (s *ClickHouseStore) ensureTable() error {
 	ctx := context.Background()
 
+	// Drop old table with wrong schema
+	s.conn.Exec(ctx, "DROP TABLE IF EXISTS events")
+
+	// Create table matching S3 parquet schema (16 columns)
 	createTable := `
 		CREATE TABLE IF NOT EXISTS events (
 			domain LowCardinality(String),
 			visitor_id String,
-			session_id String DEFAULT '',
 			name LowCardinality(String),
 			url String DEFAULT '',
 			pathname String DEFAULT '',
 			referrer String DEFAULT '',
-			utm_source LowCardinality(String) DEFAULT '',
-			utm_medium LowCardinality(String) DEFAULT '',
-			utm_campaign LowCardinality(String) DEFAULT '',
-			utm_term String DEFAULT '',
-			utm_content String DEFAULT '',
 			timestamp DateTime64(6, 'UTC'),
-			received_at DateTime64(6, 'UTC'),
+			props String DEFAULT '{}',
 			browser LowCardinality(String) DEFAULT '',
 			browser_version LowCardinality(String) DEFAULT '',
 			os LowCardinality(String) DEFAULT '',
@@ -116,7 +114,7 @@ func (s *ClickHouseStore) ensureTable() error {
 			device LowCardinality(String) DEFAULT '',
 			country LowCardinality(String) DEFAULT '',
 			city LowCardinality(String) DEFAULT '',
-			props String DEFAULT '{}'
+			received_at DateTime64(6, 'UTC')
 		)
 		ENGINE = ReplacingMergeTree()
 		PARTITION BY toYYYYMM(timestamp)
@@ -140,6 +138,7 @@ func (s *ClickHouseStore) syncFromS3() error {
 		return fmt.Errorf("truncate failed: %w", err)
 	}
 
+	// Table schema matches S3 parquet (16 columns)
 	insertQuery := fmt.Sprintf(`
 		INSERT INTO events
 		SELECT * FROM s3('%s', '%s', '%s', 'Parquet')
