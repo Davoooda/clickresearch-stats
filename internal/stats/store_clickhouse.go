@@ -317,7 +317,7 @@ func (s *ClickHouseStore) getTopByNonEmpty(ctx context.Context, field, eventFilt
 
 	query := fmt.Sprintf(`
 		SELECT
-			%s as name,
+			%s as item_name,
 			count() as count
 		FROM %s
 		WHERE domain = ?
@@ -325,7 +325,7 @@ func (s *ClickHouseStore) getTopByNonEmpty(ctx context.Context, field, eventFilt
 		AND %s IS NOT NULL AND %s != ''
 		AND timestamp >= ?
 		AND timestamp < ?
-		GROUP BY name
+		GROUP BY item_name
 		ORDER BY count DESC
 		LIMIT ?
 	`, field, s.s3Source(), eventClause, field, field)
@@ -347,14 +347,14 @@ func (s *ClickHouseStore) getTopBy(ctx context.Context, field, eventFilter, doma
 
 	query := fmt.Sprintf(`
 		SELECT
-			if(%s = '' OR %s IS NULL, 'Unknown', %s) as name,
+			if(%s = '' OR %s IS NULL, 'Unknown', %s) as item_name,
 			count() as count
 		FROM %s
 		WHERE domain = ?
 		%s
 		AND timestamp >= ?
 		AND timestamp < ?
-		GROUP BY name
+		GROUP BY item_name
 		ORDER BY count DESC
 		LIMIT ?
 	`, field, field, field, s.s3Source(), eventClause)
@@ -369,7 +369,7 @@ func (s *ClickHouseStore) getTopBy(ctx context.Context, field, eventFilter, doma
 }
 
 func (s *ClickHouseStore) scanTopItems(rows driver.Rows) ([]TopItem, error) {
-	var result []TopItem
+	result := make([]TopItem, 0)
 	for rows.Next() {
 		var item TopItem
 		var count uint64
