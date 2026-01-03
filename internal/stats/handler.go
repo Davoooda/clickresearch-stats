@@ -310,6 +310,9 @@ func (h *Handler) HandleEvents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err, http.StatusInternalServerError)
 		return
 	}
+	if data == nil {
+		data = []EventItem{}
+	}
 	h.cache.Set(cacheKey, data)
 	writeJSON(w, data)
 }
